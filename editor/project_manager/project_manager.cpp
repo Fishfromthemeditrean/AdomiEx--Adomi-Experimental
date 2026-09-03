@@ -80,6 +80,10 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #endif // PHYSICS_3D_DISABLED
 
+#ifdef WEB_ENABLED
+#include "editor/export/project_zip_packer.h"
+#endif
+
 #include "modules/modules_enabled.gen.h" // For gdscript, mono. (For editor help highlighter).
 
 constexpr int GODOT4_CONFIG_VERSION = 5;
@@ -295,6 +299,9 @@ void ProjectManager::_update_theme(bool p_skip_creation) {
 			rename_btn->set_button_icon(get_editor_theme_icon("Rename"));
 			duplicate_btn->set_button_icon(get_editor_theme_icon("Duplicate"));
 			manage_tags_btn->set_button_icon(get_editor_theme_icon("Script"));
+#ifdef WEB_ENABLED
+			download_btn->set_button_icon(get_editor_theme_icon("Download"));
+#endif
 			erase_btn->set_button_icon(get_editor_theme_icon("Remove"));
 			erase_missing_btn->set_button_icon(get_editor_theme_icon("Clear"));
 			create_tag_btn->set_button_icon(get_editor_theme_icon("Add"));
@@ -468,6 +475,13 @@ void ProjectManager::_project_list_menu_option(int p_option) {
 
 		case ProjectList::MENU_DUPLICATE:
 			_duplicate_project();
+			break;
+		case ProjectList::MENU_DOWNLOAD_BACKUP:
+#ifdef WEB_ENABLED
+			_download_project_backup();
+#else
+			_show_error("This action is unsupported in this platform. You should never see this message.");
+#endif
 			break;
 
 		case ProjectList::MENU_REMOVE:
@@ -794,8 +808,29 @@ void ProjectManager::_install_project(const String &p_zip_path, const String &p_
 }
 
 void ProjectManager::_import_project() {
+#ifdef WEB_ENABLED
+	{
+		// Text is reset every time because of AUTO_TRANSLATE_MODE_DISABLED
+		// Otherwise changing the language would not update this text
+		import_method_label->clear();
+		import_method_label->add_text(TTRC("Web editor requires to copy projects to the Browser's persistent data folder."));
+		import_method_label->add_text("\n\n");
+		const Color warning_color = theme->get_color(SNAME("warning_color"), SNAME("EditorHelp"));
+		const Ref<Texture2D> warning_icon = theme->get_icon(SNAME("NodeWarning"), SNAME("EditorIcons"));
+		const Ref<Font> doc_bold_font = theme->get_font(SNAME("doc_bold"), SNAME("EditorFonts"));
+		import_method_label->push_color(warning_color);
+		import_method_label->add_image(warning_icon, warning_icon->get_width(), warning_icon->get_height());
+		import_method_label->push_font(doc_bold_font);
+		import_method_label->add_text(" " + TTR("Warning:") + " ");
+		import_method_label->pop(); // font
+		import_method_label->add_text(TTRC("Erasing browser's persistent data cache will effectively delete all projects."));
+		import_method_label->pop(); // color
+	}
+	import_method_ask->popup_centered();
+#else
 	project_dialog->set_mode(ProjectDialog::MODE_IMPORT);
 	project_dialog->ask_for_path_and_show();
+#endif
 }
 
 void ProjectManager::_new_project() {
@@ -858,14 +893,25 @@ void ProjectManager::_erase_project() {
 	}
 
 	String confirm_message;
+#ifdef WEB_ENABLED
+	if (selected_list.size() >= 2) {
+		confirm_message = vformat(TTR("Permanently delete %d projects from the file system?\nThis action cannot be undone."), selected_list.size());
+	} else {
+		confirm_message = TTRC("Permanently delete this project from the file system?\nThis action cannot be undone.");
+	}
+	delete_project_contents->set_pressed(false);
+	download_backup_before_delete->set_pressed(true);
+	erase_ask->get_ok_button()->set_disabled(true);
+#else
 	if (selected_list.size() >= 2) {
 		confirm_message = vformat(TTR("Remove %d projects from the list?"), selected_list.size());
 	} else {
 		confirm_message = TTRC("Remove this project from the list?");
 	}
+	//delete_project_contents->set_pressed(false);
+#endif
 
 	erase_ask_label->set_text(confirm_message);
-	//delete_project_contents->set_pressed(false);
 	erase_ask->popup_centered();
 }
 
@@ -875,7 +921,15 @@ void ProjectManager::_erase_missing_projects() {
 }
 
 void ProjectManager::_erase_project_confirm() {
+#ifdef WEB_ENABLED
+	// In web platforms contents are also deleted
+	if (download_backup_before_delete->is_pressed()) {
+		_download_project_backup();
+	}
+	project_list->erase_selected_projects(true);
+#else
 	project_list->erase_selected_projects(false);
+#endif
 	_update_project_buttons();
 	_update_list_placeholder();
 }
@@ -905,6 +959,9 @@ void ProjectManager::_update_project_buttons() {
 	duplicate_btn->set_disabled(empty_selection || is_missing_project_selected);
 	manage_tags_btn->set_disabled(empty_selection || is_missing_project_selected || selected_projects.size() > 1);
 	run_btn->set_disabled(empty_selection || is_missing_project_selected);
+#ifdef WEB_ENABLED
+	download_btn->set_disabled(empty_selection);
+#endif
 
 	erase_missing_btn->set_disabled(!project_list->is_any_project_missing());
 }
@@ -976,6 +1033,69 @@ void ProjectManager::_on_recovery_mode_popup_open_recovery() {
 	open_in_recovery_mode = true;
 	_open_selected_projects_check_warnings();
 }
+
+#ifdef WEB_ENABLED
+void ProjectManager::_on_web_editor_pick_import_folder() {
+	import_method_ask->hide();
+	godot_js_editor_show_open_project_dialog(&ProjectManager::_on_web_import_project);
+}
+
+void ProjectManager::_on_web_editor_pick_import_zip() {
+	import_method_ask->hide();
+	godot_js_editor_show_import_project_zip_dialog(&ProjectManager::_on_web_import_project);
+}
+
+void ProjectManager::_on_web_import_project(int p_result, const char *p_install_path_or_error) {
+	constexpr int RESULT_INVALID = 1;
+	constexpr int RESULT_SUCCESS = 2;
+	switch (p_result) {
+		case RESULT_INVALID: {
+			String err = String::utf8(p_install_path_or_error);
+			if (!err.is_empty()) {
+				singleton->_show_error(TTR(err));
+			}
+		}
+			return;
+		case RESULT_SUCCESS: {
+			String path = String::utf8(p_install_path_or_error);
+			if (path.get_file().get_extension() == "zip") {
+				// This is a zip file
+				singleton->_install_project(path, path.get_file().get_basename().capitalize());
+			} else {
+				// This is a project fodler
+				singleton->_on_project_created(String::utf8(p_install_path_or_error), false);
+			}
+		}
+			return;
+		default: // RESULT_CANCELLED
+			return;
+	}
+}
+
+void ProjectManager::_on_web_delete_confirmation_toggled(bool p_button_pressed) {
+	erase_ask->get_ok_button()->set_disabled(!p_button_pressed);
+}
+
+void ProjectManager::_download_project_backup() {
+	for (ProjectList::Item item : project_list->get_selected_projects()) {
+		const String output_name = item.project_name.to_lower().replace_char(' ', '_');
+		const String output_path = String("/tmp").path_join(output_name);
+		ProjectZIPPacker::pack_zip_absolute_path(output_path, item.path);
+
+		{
+			Ref<FileAccess> f = FileAccess::open(output_path, FileAccess::READ);
+			ERR_FAIL_COND_MSG(f.is_null(), "Unable to create ZIP file.");
+			LocalVector<uint8_t> buf;
+			buf.resize(f->get_length());
+			f->get_buffer(buf.ptr(), buf.size());
+			godot_js_os_download_buffer(buf.ptr(), buf.size(), output_name.utf8().get_data(), "application/zip");
+		}
+
+		// Remove the temporary file since it was sent to the user's native filesystem as a download.
+		DirAccess::remove_file_or_error(output_path);
+	}
+}
+#endif
 
 void ProjectManager::_on_project_created(const String &dir, bool edit) {
 	project_list->add_project(dir, false);
@@ -1621,6 +1741,11 @@ ProjectManager::ProjectManager() {
 			filter_option->add_item(TTRC("Name"));
 			filter_option->add_item(TTRC("Path"));
 			filter_option->add_item(TTRC("Tags"));
+#ifdef WEB_ENABLED
+			scan_btn->hide();
+			callable_mp(project_list, &ProjectList::find_projects).call_deferred("/home/web_user/");
+			callable_mp(this, &ProjectManager::_erase_missing_projects_confirm).call_deferred();
+#endif
 		}
 
 		// Project list and its sidebar.
@@ -1756,6 +1881,13 @@ ProjectManager::ProjectManager() {
 			manage_tags_btn->set_shortcut(ED_SHORTCUT("project_manager/project_tags", TTRC("Manage Tags"), KeyModifierMask::CMD_OR_CTRL | Key::T));
 			sidebar_buttons_containter->add_child(manage_tags_btn);
 
+#ifdef WEB_ENABLED
+			download_btn = memnew(Button);
+			download_btn->set_text(TTRC("Download Backup"));
+			download_btn->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_download_project_backup));
+			sidebar_buttons_containter->add_child(download_btn);
+#endif
+
 			erase_btn = memnew(Button);
 			erase_btn->set_text(TTRC("Remove"));
 			erase_btn->set_shortcut(ED_SHORTCUT("project_manager/remove_project", TTRC("Remove Project"), Key::KEY_DELETE));
@@ -1771,6 +1903,11 @@ ProjectManager::ProjectManager() {
 			donate_btn->set_text(TTRC("Donate"));
 			donate_btn->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_open_donate_page));
 			project_list_sidebar->add_child(donate_btn);
+
+#ifdef WEB_ENABLED
+			erase_btn->set_text(TTRC("Delete"));
+			erase_missing_btn->hide();
+#endif
 		}
 	}
 
@@ -1912,6 +2049,40 @@ ProjectManager::ProjectManager() {
 
 		about_dialog = memnew(EditorAbout);
 		add_child(about_dialog);
+
+#ifdef WEB_ENABLED
+		// Erase button
+		erase_ask->set_ok_button_text(TTRC("Delete"));
+		delete_project_contents = memnew(CheckBox);
+		delete_project_contents->set_text(TTRC("I understand."));
+		delete_project_contents->connect(SceneStringName(toggled), callable_mp(this, &ProjectManager::_on_web_delete_confirmation_toggled));
+		erase_ask_vb->add_child(delete_project_contents);
+		download_backup_before_delete = memnew(CheckBox);
+		download_backup_before_delete->set_text(TTRC("Download backup before deleting."));
+		erase_ask_vb->add_child(download_backup_before_delete);
+
+		// Import button
+		import_method_ask = memnew(ConfirmationDialog);
+		add_child(import_method_ask);
+		import_method_ask->set_title(TTRC("Import"));
+		import_method_ask->set_ok_button_text(TTRC("Select Project Folder"));
+		import_method_ask->get_ok_button()->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_on_web_editor_pick_import_folder));
+		import_method_ask->add_button(TTRC("Select Project Zip file"))->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_on_web_editor_pick_import_zip));
+
+		VBoxContainer *import_method_vb = memnew(VBoxContainer);
+		import_method_vb->set_h_size_flags(SIZE_EXPAND_FILL);
+		import_method_ask->add_child(import_method_vb);
+
+		import_method_label = memnew(RichTextLabel);
+		import_method_label->set_h_size_flags(SIZE_EXPAND_FILL);
+		import_method_label->set_custom_minimum_size(Size2(400 * EDSCALE, 0));
+		import_method_vb->add_child(import_method_label);
+		import_method_label->set_focus_mode(FOCUS_ACCESSIBILITY);
+		import_method_label->set_auto_translate_mode(AUTO_TRANSLATE_MODE_DISABLED);
+		import_method_label->set_use_bbcode(true);
+		import_method_label->set_fit_content(true);
+		import_method_label->add_theme_style_override(CoreStringName(normal), memnew(StyleBoxEmpty));
+#endif
 	}
 
 	// Tag management.
