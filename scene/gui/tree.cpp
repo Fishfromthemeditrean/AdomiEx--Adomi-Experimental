@@ -38,7 +38,6 @@
 #include "core/object/class_db.h"
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
-#include "editor/themes/editor_scale.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/line_edit.h"
 #include "scene/gui/popup_menu.h"
@@ -4447,15 +4446,14 @@ void Tree::gui_input(const Ref<InputEvent> &p_event) {
 
 	Ref<InputEventPanGesture> pan_gesture = p_event;
 	if (pan_gesture.is_valid()) {
-		// TODO: CHECK FOR OTHER USES OF P_EVENT HERE, LIKE ANIMATION_STATE_MACHINE_EDITOR.CPP
 		double prev_v = v_scroll->get_value();
-		v_scroll->set_value(v_scroll->get_value() + pan_gesture->get_delta().y / EDSCALE);
+		v_scroll->set_value(v_scroll->get_value() + pan_gesture->get_delta().y);
 
 		double prev_h = h_scroll->get_value();
 		if (is_layout_rtl()) {
-			h_scroll->set_value(h_scroll->get_value() - pan_gesture->get_delta().x / EDSCALE);
+			h_scroll->set_value(h_scroll->get_value() - pan_gesture->get_delta().x);
 		} else {
-			h_scroll->set_value(h_scroll->get_value() + pan_gesture->get_delta().x / EDSCALE);
+			h_scroll->set_value(h_scroll->get_value() + pan_gesture->get_delta().x);
 		}
 
 		if (v_scroll->get_value() != prev_v || h_scroll->get_value() != prev_h) {
