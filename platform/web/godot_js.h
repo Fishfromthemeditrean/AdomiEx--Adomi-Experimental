@@ -57,6 +57,7 @@ extern int godot_js_os_thread_pool_size_get();
 extern int godot_js_os_has_feature(const char *p_ftr);
 extern int godot_js_pwa_cb(void (*p_callback)());
 extern int godot_js_pwa_update();
+extern void godot_js_os_download_buffer(const uint8_t *p_buf, int p_buf_size, const char *p_name, const char *p_mime);
 
 // Input
 extern void godot_js_input_mouse_button_cb(int (*p_callback)(int p_pressed, int p_button, double p_x, double p_y, int p_modifiers));
@@ -134,6 +135,13 @@ extern int godot_js_display_tts_available();
 extern void godot_js_display_vk_cb(void (*p_input)(const char *p_text, int p_cursor));
 extern void godot_js_display_vk_show(const char *p_text, int p_type, int p_start, int p_end);
 extern void godot_js_display_vk_hide();
+
+#ifdef TOOLS_ENABLED
+// Editor only callbacks
+extern int godot_js_editor_show_open_project_dialog(void (*p_done_callback)(int result, const char *p_root_path));
+extern int godot_js_editor_show_import_project_zip_dialog(void (*p_done_callback)(int result, const char *p_root_path));
+extern void godot_js_editor_delete_dir(const char *p_path);
+#endif
 
 #ifdef __cplusplus
 }
