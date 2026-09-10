@@ -672,7 +672,7 @@ void EditorResourcePicker::set_create_options(Object *p_menu_node) {
 		for (const StringName &E : allowed_types) {
 			const String &t = E;
 
-			if (!ClassDB::can_instantiate(t)) {
+			if ((ClassDB::class_exists(t) && !ClassDB::can_instantiate(t)) || (ScriptServer::is_global_class(t) && ScriptServer::is_global_class_abstract(t))) {
 				continue;
 			}
 
@@ -799,7 +799,7 @@ String EditorResourcePicker::_get_resource_type(const Ref<Resource> &p_resource)
 }
 
 static bool _should_hide_type(const StringName &p_type) {
-	if (ClassDB::is_virtual(p_type)) {
+	if ((ClassDB::class_exists(p_type) && ClassDB::is_virtual(p_type)) || (ScriptServer::is_global_class(p_type) && ScriptServer::is_global_class_abstract(p_type))) {
 		return true;
 	}
 
