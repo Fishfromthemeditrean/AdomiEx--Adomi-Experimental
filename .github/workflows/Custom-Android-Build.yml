@@ -1,6 +1,6 @@
 name: 🤖 Custom Android Builds
 on:
-  workflow_call:
+  workflow_dispatch:
 
 # Global Settings
 env:
